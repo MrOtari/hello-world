@@ -1,388 +1,532 @@
-Business Data Analytics
-Lab 2. Descriptive analysis and visualization
+Business Data Analytics. Practice Session
+Customer segmentation
 University of Tartu
-Descriptive analysis (sometimes referred to as Exploratory analysis) is a crucial part in any kind of analysis. The goal is to “get to know your dataset” - to find outliers, irregularities and identify what transformations to do for the further stages (e.g. for modelling). Exploratory phase is largely an iterative process, where you develop understanding of the data by
+Today practice session is about customer segmentation, which has become an essential part of marketing. During the practice we will deal with the RFM model and the heuristic approach, while later on we will demonstrate the automatic segmentation discovery via kmeans and hierarchical clustering.
 
-collecting questions about the data
-answering them by transforming the data, summarizing and plotting it,
-which leads to new questions :)
-Prerequisites (recap)
-The power of R comes from the vast universe of packages. Every time you need a new package you install it:
+Packages
+For this practice session you will need next packages:
 
-install.packages("ggplot2")
-install.packages("dplyr")
-In your script you will load packages by writing:
+library(dplyr)
+library(ggplot2)
+library(gridExtra)
+library(data.table)
+library(tm) # package for text mining
+library(wordcloud) # for word visualization
+library(ape) # dendrogram plotting
+library(ggdendro) # dendrogram plotting
+In case some packages can not be found, place install them with the next command:
 
-library("ggplot2")
-library("dplyr")
-Loading datasets
-Now we load a dataset into R. Today we are analyzing data (artificial) of total sales on a weekly basis for two particular products in different stores. There are many ways things can be done in R. For example, you can read in dataset using basic functionality:
+install.packages(“name-of-the-package”)
 
-There are a planty of ways to load data from .csv files. The one that we will use:
+RFM
+Let’s first load a dataset, where there is an information about clients and their orders along with the order details:
 
-df <- read.csv(file.choose()) # lab2_Data.csv
-Let’s print some rows and look at the data that we loaded:
+orders <- read.table(file.choose(), header=TRUE, sep=',') # orders_rfm.csv
+The next logical step is to investigate what kind of data you have.
 
-head(df,3)
-##   storeNum Year Week p1sales p2sales p1price p2price p1prom p2prom country
-## 1      101    1    1     127     106    2.29    2.29      0      0      US
-## 2      101    1    2     137     105    2.49    2.49      0      0      US
-## 3      101    1    3     156      97    2.99    2.99      1      0      US
-Let us understand the dataset.
+View(orders)
+Let’s perform RFM analysis, which means to calculate three key measures:
 
-View(df)
-We can use another functions to study our data:
+R - recency score
+F - frequency score
+M - monetary score
+In our case recency will be expressed as number of days since the last order, frequency will be defined as the number of purchased items, and monetary score is the total amount spent during the defined period. There are a lot of variations of these definitions. For example, when necessary, you may want to aggregate recency component on a yearly basis rather than using days; frequency and monetary scores can be expressed as the percentage of one period to another, etc. Moreover, it is important to define the period under investigation:
 
-str(df)
-## 'data.frame':    2080 obs. of  10 variables:
-##  $ storeNum: int  101 101 101 101 101 101 101 101 101 101 ...
-##  $ Year    : int  1 1 1 1 1 1 1 1 1 1 ...
-##  $ Week    : int  1 2 3 4 5 6 7 8 9 10 ...
-##  $ p1sales : int  127 137 156 117 138 115 116 106 116 145 ...
-##  $ p2sales : int  106 105 97 106 100 127 90 126 94 91 ...
-##  $ p1price : num  2.29 2.49 2.99 2.99 2.49 2.79 2.99 2.99 2.29 2.49 ...
-##  $ p2price : num  2.29 2.49 2.99 3.19 2.59 2.49 3.19 2.29 2.29 2.99 ...
-##  $ p1prom  : int  0 0 1 0 0 0 0 0 0 0 ...
-##  $ p2prom  : int  0 0 0 0 1 0 0 0 0 0 ...
-##  $ country : Factor w/ 7 levels "AU","BR","CN",..: 7 7 7 7 7 7 7 7 7 7 ...
-dim(df)
-## [1] 2080   10
-Now find all the countries where stores are located.
+First let’s pick date of interest:
 
-Removing NA values
-Let’s check for a NA:
+reporting_date <- as.Date('2017-03-10', format='%Y-%m-%d')
+reporting_date
+## [1] "2017-03-10"
+Next, we have to change the type of the date in our table from factor to date:
 
-rows <- which(is.na(df), arr.ind=TRUE)[,1]
-df[rows,]
-##    storeNum Year Week p1sales p2sales p1price p2price p1prom p2prom country
-## 12      101    1   12      NA      73    2.49    3.19      0      0      US
-## 33      101    1   33     120      77    2.79    2.99      0      0    <NA>
-We can use next function to remove rows with NA:
+str(orders)
+## 'data.frame':    4378 obs. of  5 variables:
+##  $ order_id   : int  1 1 1 1 2 2 2 2 3 3 ...
+##  $ product    : Factor w/ 3 levels "a","b","c": 1 2 3 2 1 3 2 1 1 3 ...
+##  $ client_id  : int  473 473 473 473 282 282 282 282 220 220 ...
+##  $ order_date : Factor w/ 100 levels "2017-01-02","2017-01-03",..: 91 91 91 91 47 47 47 47 55 55 ...
+##  $ money_spent: num  14.8 112.47 235.69 28.38 8.36 ...
+orders$order_date <- as.Date(orders$order_date, format='%Y-%m-%d')
+str(orders)
+## 'data.frame':    4378 obs. of  5 variables:
+##  $ order_id   : int  1 1 1 1 2 2 2 2 3 3 ...
+##  $ product    : Factor w/ 3 levels "a","b","c": 1 2 3 2 1 3 2 1 1 3 ...
+##  $ client_id  : int  473 473 473 473 282 282 282 282 220 220 ...
+##  $ order_date : Date, format: "2017-04-02" "2017-04-02" ...
+##  $ money_spent: num  14.8 112.47 235.69 28.38 8.36 ...
+For more details about the format of the dates refer to: https://www.statmethods.net/input/dates.html
 
-df <- na.omit(df)
+Since we are interested only in orders that happened before specified date, we will filter unneccessary orders:
 
-rows <- which(is.na(df), arr.ind=TRUE)[,1]
-df[rows,]
-##  [1] storeNum Year     Week     p1sales  p2sales  p1price  p2price  p1prom  
-##  [9] p2prom   country 
-## <0 rows> (or 0-length row.names)
-Descriptive statistics
-Summary statistics is displayed by:
+orders <- filter(orders, order_date <= reporting_date)
+As we discussed previously, the descriptive part helps to get sense of the data:
 
-summary(df)
-##     storeNum          Year          Week          p1sales       p2sales     
-##  Min.   :101.0   Min.   :1.0   Min.   : 1.00   Min.   : 73   Min.   : 51.0  
-##  1st Qu.:106.0   1st Qu.:1.0   1st Qu.:14.00   1st Qu.:113   1st Qu.: 84.0  
-##  Median :111.0   Median :2.0   Median :26.50   Median :129   Median : 96.0  
-##  Mean   :110.5   Mean   :1.5   Mean   :26.50   Mean   :133   Mean   :100.2  
-##  3rd Qu.:115.8   3rd Qu.:2.0   3rd Qu.:39.75   3rd Qu.:150   3rd Qu.:113.0  
-##  Max.   :120.0   Max.   :2.0   Max.   :52.00   Max.   :263   Max.   :225.0  
-##                                                                             
-##     p1price         p2price          p1prom           p2prom       country 
-##  Min.   :2.190   Min.   :2.290   Min.   :0.0000   Min.   :0.0000   AU:104  
-##  1st Qu.:2.290   1st Qu.:2.490   1st Qu.:0.0000   1st Qu.:0.0000   BR:208  
-##  Median :2.490   Median :2.590   Median :0.0000   Median :0.0000   CN:208  
-##  Mean   :2.544   Mean   :2.699   Mean   :0.1001   Mean   :0.1386   DE:520  
-##  3rd Qu.:2.790   3rd Qu.:2.990   3rd Qu.:0.0000   3rd Qu.:0.0000   GB:312  
-##  Max.   :2.990   Max.   :3.190   Max.   :1.0000   Max.   :1.0000   JP:416  
-##                                                                    US:310
-We see that country is a factor and represents country where store is located. There are 7 different countries and we can see amount of observations with each country after “:”.
-
-We can study columns using next functions:
-
-unique(df$country)# displays all unique values
-## [1] US DE GB BR JP AU CN
-## Levels: AU BR CN DE GB JP US
-length(unique(df$storeNum)) # number of unique countries in our dataset
-## [1] 20
-Discrete variables
-Another useful inspection for discrete features (variables) is using frequency counts. This can be achieved by table function:
-
-table(df$p1prom)
+length(unique(orders$client_id)) # Client ids
+## [1] 401
+table(orders$product) # Times each product was bought
 ## 
-##    0    1 
-## 1870  208
-table(promotion_p1=df$p1prom, promotion_p2=df$p2prom) # two-way frequency table
-##             promotion_p2
-## promotion_p1    0    1
-##            0 1614  256
-##            1  176   32
-The next question we might ask is how much varies price of the first and second product:
+##    a    b    c 
+## 1811  788  405
+Note. We will have some comments with package name in order to follow where the functions originate from.
 
-summary(df$p1price)
-##    Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
-##   2.190   2.290   2.490   2.544   2.790   2.990
-summary(df$p2price)
-##    Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
-##   2.290   2.490   2.590   2.699   2.990   3.190
-We also would like to know what are the prices when the product’s price is reduced and is not. Price is a continuous variable. However, we already checked that it does not vary much. We can display frequencies using table function:
+We will calcualte the frequency, recency and monetary values in the following way:
 
-price_table <- table(promotion=df$p1prom, price=df$p1price) # how many times each product was promoted at each price level
-price_table
-##          price
-## promotion 2.19 2.29 2.49 2.79 2.99
-##         0  354  398  380  395  343
-##         1   41   46   42   47   32
-But let’s see the percentages and margins instead of the counts. This way, we can compare it to the second product.
+#dplyr
+frm_tbl_initial <- orders %>%
+  group_by(client_id) %>%
+  summarise(order_frequency = n(), # amount of products
+            order_recency = min(reporting_date - order_date), # days since last order 
+            order_monetary = sum(money_spent)) # total amount spent
+head(frm_tbl_initial)
+## # A tibble: 6 x 4
+##   client_id order_frequency order_recency order_monetary
+##       <int>           <int> <drtn>                 <dbl>
+## 1         1               6  5 days                570. 
+## 2         2               7  2 days                538. 
+## 3         3               7 17 days                768. 
+## 4         4               5  6 days               1327. 
+## 5         5               2 62 days                 28.6
+## 6         6               8 22 days                513.
+Order recency is a time object (days), which can cause errors later. We need to transform it into numeric value:
 
-# promotions are in rows, prices are in columns
-# summing over rows
-margin.table(price_table, 1)
-## promotion
-##    0    1 
-## 1870  208
-# summing over columns
-margin.table(price_table, 2)
-## price
-## 2.19 2.29 2.49 2.79 2.99 
-##  395  444  422  442  375
-prop.table(price_table) # cell %  
-##          price
-## promotion       2.19       2.29       2.49       2.79       2.99
-##         0 0.17035611 0.19153032 0.18286814 0.19008662 0.16506256
-##         1 0.01973051 0.02213667 0.02021174 0.02261790 0.01539942
-#395+444+423+443+375=2080
-#0.17019231= 354/2080
-prop.table(price_table, 1) # row percentages
-##          price
-## promotion      2.19      2.29      2.49      2.79      2.99
-##         0 0.1893048 0.2128342 0.2032086 0.2112299 0.1834225
-##         1 0.1971154 0.2211538 0.2019231 0.2259615 0.1538462
-# 1872 
-# 354/1872= 0.1891026
-prop.table(price_table, 2) # column percentages
-##          price
-## promotion       2.19       2.29       2.49       2.79       2.99
-##         0 0.89620253 0.89639640 0.90047393 0.89366516 0.91466667
-##         1 0.10379747 0.10360360 0.09952607 0.10633484 0.08533333
-#354/395=0.89620253
-Find now the percentages of discounted products for different price levels for product 2.
+class(frm_tbl_initial$order_recency) # checks type of the variable
+## [1] "difftime"
+frm_tbl_initial$order_recency <- as.numeric(frm_tbl_initial$order_recency) 
+class(frm_tbl_initial$order_recency)
+## [1] "numeric"
+We will investigate the distribution of the values in our RFM calculations:
 
-Continuous variables
-For continuous variables, where data varies a lot, table is not feasible nor meaningful. Try for example running table(dt$p1sales). The following table summarizes the functions of descriptive statistics that we discussed during the lecture.
+#ggplot2
+ggplot(frm_tbl_initial, aes(x=order_recency)) + geom_histogram(fill='#8b3840', color='grey60', binwidth = 1) + theme_bw()
 
-min(x) - Minimum value
-max(x) - Maximum value
-mean(x) - Mean
-median(x) - Median
-var(x) - Variance
-sd(x) - Standard deviation
-quantile(x, probs=c(0.25, 0.5, 0.75)) - Percentiles/Quartiles
-cor(x, y) Correlation function
-Observe statistics for sales of product1. Is there anything interesting?
 
-Data Transformations
-Often exploring data involves a narrower approach. For example, instead of average sales of the first product we want to calculate average sales for each country, or for each shop. Or we want to filter the data and take a look at average sales when the product was promoted. If you have experience with other programming languages, your first approach for such analysis would be to run for loops. However, the power of R comes from the vectorized approach.
+ggplot(frm_tbl_initial, aes(x=order_frequency)) + geom_histogram(fill='#8b3840', color='grey60', binwidth = 1) + theme_bw()
 
-Vectorization is the process of rewriting a loop so that instead of processing a single element of an array N times, it processes (for example) 4 elements of the array simultaneously N/4 times.
+Task: Demonstrate the code for the histogram of the monetary values
 
-A bit too technical, but let’s see what it means on practice. Let’s first try to calculate average sales per country using classical approach:
 
-countries = unique(df$country) # choose unique countries in our dataset
-for(cn in countries){ # create a loop to pick a country from our country vector
-  country_df <- filter(df, country==cn) # filter the data, so that only data for this country is chosen
-  country_mean <- mean(country_df$p1sales) # calculate the mean for this country
-  print(c(cn, country_mean)) # print the result one-by-one
+
+Now, we need to define the limits of our RFM values and divide these intervals into bins. There are, again, many ways to proceed. We will use our domain knowledge and define cut points manually. However, we can define bins using quantiles, using equal intervals in terms of values or equal intervals in terms of number of observations in each bin.
+
+Note. cut_interval makes n groups with equal range, cut_number makes n groups with (approximately) equal numbers of observations. cut function allows to specify cutting points manually.
+
+summary(frm_tbl_initial) # to explore limits
+##    client_id     order_frequency  order_recency   order_monetary   
+##  Min.   :  1.0   Min.   : 1.000   Min.   : 0.00   Min.   :   9.73  
+##  1st Qu.:136.0   1st Qu.: 4.000   1st Qu.:11.00   1st Qu.: 329.91  
+##  Median :286.0   Median : 7.000   Median :23.00   Median : 622.17  
+##  Mean   :281.7   Mean   : 7.491   Mean   :26.55   Mean   : 738.76  
+##  3rd Qu.:426.0   3rd Qu.:10.000   3rd Qu.:39.00   3rd Qu.:1008.34  
+##  Max.   :560.0   Max.   :31.000   Max.   :67.00   Max.   :3344.72
+Here we set breaks according to explored data above:
+
+fr_tbl <- mutate(frm_tbl_initial, 
+                 frequency_bins = cut(order_frequency,
+                                      breaks = c(0,4,7,8,10,31)))
+table(fr_tbl$frequency_bins)
+## 
+##   (0,4]   (4,7]   (7,8]  (8,10] (10,31] 
+##     129     109      32      41      90
+fr_tbl <- mutate(fr_tbl, 
+                 recency_bins = cut(order_recency,
+                                      breaks = c(-1,11,23,26,39,67)))
+table(fr_tbl$recency_bins)
+## 
+## (-1,11] (11,23] (23,26] (26,39] (39,67] 
+##     102     102      20      79      98
+fr_tbl <- mutate(fr_tbl, 
+                 monetary_bins = cut(order_monetary, 
+                                     breaks=c(9,330,622,739,1008,3345)))
+table(fr_tbl$monetary_bins)
+## 
+##             (9,330]           (330,622]           (622,739] 
+##                 101                  99                  34 
+##      (739,1.01e+03] (1.01e+03,3.34e+03] 
+##                  66                 101
+Now, we have the clients allocated into bins, which provides already a good intution, what kind of customers and how many of those we have. We can explore 2-way and 3-way frequency tables:
+
+table(frequency=fr_tbl$frequency_bins, recency=fr_tbl$recency_bins)
+##          recency
+## frequency (-1,11] (11,23] (23,26] (26,39] (39,67]
+##   (0,4]        22      26       6      32      43
+##   (4,7]        26      29       6      14      34
+##   (7,8]         6       9       2      12       3
+##   (8,10]        8      11       2       9      11
+##   (10,31]      40      27       4      12       7
+table(frequency=fr_tbl$frequency_bins, recency=fr_tbl$recency_bins, monetary=fr_tbl$monetary_bins)
+## , , monetary = (9,330]
+## 
+##          recency
+## frequency (-1,11] (11,23] (23,26] (26,39] (39,67]
+##   (0,4]        14      17       3      18      30
+##   (4,7]         6       3       2       2       6
+##   (7,8]         0       0       0       0       0
+##   (8,10]        0       0       0       0       0
+##   (10,31]       0       0       0       0       0
+## 
+## , , monetary = (330,622]
+## 
+##          recency
+## frequency (-1,11] (11,23] (23,26] (26,39] (39,67]
+##   (0,4]         6       6       2      13       8
+##   (4,7]        11      15       3       8      12
+##   (7,8]         3       2       0       3       1
+##   (8,10]        2       2       0       0       1
+##   (10,31]       0       0       0       1       0
+## 
+## , , monetary = (622,739]
+## 
+##          recency
+## frequency (-1,11] (11,23] (23,26] (26,39] (39,67]
+##   (0,4]         1       3       0       1       1
+##   (4,7]         2       7       1       2       6
+##   (7,8]         0       1       0       0       1
+##   (8,10]        1       1       0       2       2
+##   (10,31]       0       0       1       1       0
+## 
+## , , monetary = (739,1.01e+03]
+## 
+##          recency
+## frequency (-1,11] (11,23] (23,26] (26,39] (39,67]
+##   (0,4]         1       0       1       0       3
+##   (4,7]         5       3       0       2       8
+##   (7,8]         1       4       0       4       1
+##   (8,10]        2       4       1       5       4
+##   (10,31]       7       9       0       0       1
+## 
+## , , monetary = (1.01e+03,3.34e+03]
+## 
+##          recency
+## frequency (-1,11] (11,23] (23,26] (26,39] (39,67]
+##   (0,4]         0       0       0       0       1
+##   (4,7]         2       1       0       0       2
+##   (7,8]         2       2       2       5       0
+##   (8,10]        3       4       1       2       4
+##   (10,31]      33      18       3      10       6
+We can see from the table that the order of the bins is from the smallest value to the higher. However, if we want the best clients to be in the upper-left corner (also, later for the plots), we need to relevel our factor feature – bins. Recency can be the same - the more recent the purchase is, the better. However, for monetary and frequency scores we want it to be the opposite – the higher the bin, the better.
+
+fr_tbl$frequency_bins <- factor(fr_tbl$frequency_bins, levels=rev(levels(fr_tbl$frequency_bins)))
+fr_tbl$monetary_bins <- factor(fr_tbl$monetary_bins, levels=rev(levels(fr_tbl$monetary_bins)))
+
+table(frequency=fr_tbl$frequency_bins, recency=fr_tbl$recency_bins)
+##          recency
+## frequency (-1,11] (11,23] (23,26] (26,39] (39,67]
+##   (10,31]      40      27       4      12       7
+##   (8,10]        8      11       2       9      11
+##   (7,8]         6       9       2      12       3
+##   (4,7]        26      29       6      14      34
+##   (0,4]        22      26       6      32      43
+There are also some plots that may help us to understand our rfm tables better:
+
+fr_tbl_counts <- fr_tbl %>% group_by(frequency_bins, recency_bins) %>% summarise(count=n())
+p_basic <- ggplot(fr_tbl_counts, aes(x=recency_bins, y=frequency_bins)) + geom_tile(aes(fill=count))+ 
+  geom_text(aes(label = count)) +
+  scale_fill_gradient(low='#f0f0f0', high="#636363") + theme_bw(base_size=20)
+p_basic
+
+
+p_quadrants <- p_basic +
+  ggplot2::annotate("rect", xmin = 0, xmax=3.47, ymin=3.47, ymax=6, color='green', alpha=0.1, fill='green') +
+  ggplot2::annotate("rect", xmin = 0, xmax=3.47, ymin=2.5, ymax=3.47, color='yellow', alpha=0.1, fill='yellow') +
+  ggplot2::annotate("rect", xmin = 0, xmax=3.47, ymin=0, ymax=2.5, color='blue', alpha=0.1, fill='blue') +
+  ggplot2::annotate("rect", xmin = 3.5, xmax=6, ymin=3.47, ymax=6, color='red', alpha=0.1, fill='red') +
+  ggplot2::annotate("rect", xmin = 3.5, xmax=6, ymin=0, ymax=3.47, color='black', alpha=0.1, fill='black')
+p_quadrants
+
+
+p_quadrants + 
+  ggplot2::annotate("text", x=1.8, y=5.8, label='New') +
+  ggplot2::annotate("text", x=4.8, y=5.8, label='Lost') +
+  ggplot2::annotate("text", x=1.4, y=2.7, label='Promising') +
+  ggplot2::annotate("text", x=1.8, y=0.2, label='Loyal customers') +
+  ggplot2::annotate("text", x=4.8, y=0.2, label='Hibernating loyal customers')
+
+
+Another approach to RFM calculation is to replace bins with numeric values, usually from 1 to 5, and create an RFM score which is just putting the numbers together. For example, a customer, who belongs to the first bin in R, to the second in F and to the fifth in M will have an RFM score of 125:
+
+fr_tbl_score <- fr_tbl %>% 
+  mutate(f_score = as.numeric(frequency_bins),
+                                  r_score = as.numeric(recency_bins),
+                                  m_score = as.numeric(monetary_bins)) %>%
+  mutate(RFM_score = paste(f_score, r_score, m_score, sep=''))
+fr_tbl_score %>% arrange(RFM_score) %>% View  
+# will open a table in the view format, arrange sorts the data
+The RFM approach is widely used and has a lot of use cases on practice. We can find our best and worst customers, we can decide where to focus our attention, to whom send the campaign and offer discounts. It is clear and reasonably easy to interpret (the only problem is how to visualize the three dimensions simultaniously). However, it requires your attention and highly depends on your choices. It is unlikely you can discover something unexpected. The automatic segmentation is a foray into uncharted territory of your data. Let’s see how it can be done.
+
+K-means clustering
+Firstly, if we want to use k-means approach we need to scale features by substructing mean and dividing by standard deviation. This can be done using scale function. We firstly will cluster the previous dataset using only intial values (not scores or bins!)
+
+data_clustering <- frm_tbl_initial %>%
+  mutate(order_frequency=scale(order_frequency), 
+         order_recency=scale(order_recency), 
+         order_monetary=scale(order_monetary))
+head(data_clustering)
+## # A tibble: 6 x 4
+##   client_id order_frequency[,1] order_recency[,1] order_monetary[,1]
+##       <int>               <dbl>             <dbl>              <dbl>
+## 1         1              -0.313            -1.20             -0.315 
+## 2         2              -0.103            -1.36             -0.376 
+## 3         3              -0.103            -0.530             0.0555
+## 4         4              -0.523            -1.14              1.10  
+## 5         5              -1.15              1.97             -1.33  
+## 6         6               0.107            -0.252            -0.423
+Then, it is wise to explore what parameters kmeans method requires:
+
+?kmeans
+clusters <- kmeans(data_clustering[,-1], centers = 4, nstart=20)
+clusters
+## K-means clustering with 4 clusters of sizes 121, 106, 133, 41
+## 
+## Cluster means:
+##   order_frequency order_recency order_monetary
+## 1      -0.5661835     1.2113811     -0.5162166
+## 2       0.5938012    -0.4162385      0.5994776
+## 3      -0.5969853    -0.6116025     -0.6302059
+## 4       2.0723004    -0.5149442      2.0179260
+## 
+## Clustering vector:
+##   [1] 3 3 3 2 1 3 3 3 3 3 1 1 4 1 3 4 3 2 4 3 1 2 1 1 2 2 1 1 1 1 3 3 2 4 3
+##  [36] 2 2 1 3 1 2 1 1 3 3 2 1 3 4 3 3 1 3 1 2 1 3 2 1 1 1 3 3 3 4 3 3 3 3 3
+##  [71] 3 1 1 2 2 1 2 4 3 1 2 2 3 1 3 1 2 1 1 2 2 4 1 2 2 2 3 4 2 3 3 2 1 1 3
+## [106] 2 3 3 4 2 1 2 3 4 1 3 1 3 4 3 2 1 3 3 3 3 3 3 3 3 2 3 2 1 2 3 4 2 3 1
+## [141] 1 2 3 2 3 3 4 4 2 4 1 1 2 1 2 3 2 1 4 1 1 2 3 4 2 3 3 2 3 1 1 1 4 3 2
+## [176] 2 2 2 2 3 3 1 3 3 3 3 2 1 2 2 1 2 1 4 2 3 2 2 3 1 4 2 4 2 1 1 1 3 1 4
+## [211] 2 1 2 1 1 3 1 1 2 3 3 3 3 3 3 3 2 3 3 4 1 4 3 2 1 1 2 4 1 3 3 1 3 3 2
+## [246] 3 1 1 1 3 3 2 1 3 4 3 3 2 2 2 2 3 2 3 1 2 2 2 3 2 2 3 1 3 4 2 2 2 2 2
+## [281] 2 2 1 3 3 3 3 2 3 3 3 1 1 4 2 1 1 2 3 2 1 3 1 1 2 1 3 3 4 1 1 3 1 2 3
+## [316] 1 1 2 1 2 1 3 1 3 4 1 1 1 1 2 3 1 3 1 1 1 1 1 4 3 2 4 3 4 1 3 4 3 1 3
+## [351] 3 3 4 3 1 2 1 1 3 3 2 4 1 2 3 2 2 1 3 2 1 1 4 1 2 3 1 1 1 2 2 1 1 3 1
+## [386] 2 2 2 2 1 3 4 1 1 4 2 4 3 2 3 1
+## 
+## Within cluster sum of squares by cluster:
+## [1] 104.67856  86.67699  69.57170  92.77718
+##  (between_SS / total_SS =  70.5 %)
+## 
+## Available components:
+## 
+## [1] "cluster"      "centers"      "totss"        "withinss"    
+## [5] "tot.withinss" "betweenss"    "size"         "iter"        
+## [9] "ifault"
+Let us assgn clusters to the clients, by adding it to the data frame
+
+data_clustering$cluster <- as.factor(clusters$cluster) # we need it to be a factor for the plot
+ggplot(data_clustering, aes(x=order_frequency, y=order_recency, color=cluster)) + geom_point(size=2) + theme_bw()
+
+
+We can plot all three plots together:
+
+#gridExtra
+p1 <- ggplot(data_clustering, aes(x=order_frequency, y=order_recency, color=cluster)) + geom_point(size=2) + theme_bw()
+p2 <- ggplot(data_clustering, aes(x=order_frequency, y=order_monetary, color=cluster)) + geom_point(size=2) + theme_bw()
+p3 <- ggplot(data_clustering, aes(x=order_monetary, y=order_recency, color=cluster)) + geom_point(size=2) + theme_bw()
+grid.arrange(p1,p2,p3, nrow=3)
+
+
+The reasonable question to ask is how to choose number of clusters? It is usually the iterative process where the clusters should be manually inspected. You should be asking the following questions. Are they are different enough? Do they make sense? If I change number of clusters, does the structure changes a lot or the pattern of clusters persists? There are also various techniques how to identify number of clusters. These methods provide you with some additional intuition (but they do not guarantee this is the best number of clusters for your problem). Also, be aware that the clusters can be found even when the underlying structure does not have them. We will take a look at the most common elbow method.
+
+# finding optimal number of clusters
+elbow_method <- function(data, max_k=15){
+  require(ggplot2)
+  wss <- 0
+  for (i in 1:max_k){
+    wss[i] <- sum(kmeans(data, centers=i)$withinss)
+  }
+  p <- data.frame(number_of_clusters=c(1:max_k), wss=wss) %>%
+    ggplot(aes(x=number_of_clusters, y=wss)) + geom_point() + 
+    geom_line() + theme_bw() + ylab("Within groups sum of squares")
+  return(print(p))
 }
-## [1] "US"               "133.703225806452"
-## [1] "DE"               "132.453846153846"
-## [1] "GB"               "131.365384615385"
-## [1] "BR"               "133.826923076923"
-## [1] "JP"               "133.127403846154"
-## [1] "AU"               "139.846153846154"
-## [1] "CN"               "131.639423076923"
-Now the vectorized approach would be:
 
-df %>%
- group_by(country) %>%
- summarise(sales_mean = mean(p1sales))
-## # A tibble: 7 x 2
-##   country sales_mean
-##   <fct>        <dbl>
-## 1 AU            140.
-## 2 BR            134.
-## 3 CN            132.
-## 4 DE            132.
-## 5 GB            131.
-## 6 JP            133.
-## 7 US            134.
-Let’s measure the time taken for each of two approaches by writing Sys.time around our functions (the first is ‘for loop’ and the second is vectorized approach):
+# apply the function
+elbow_method(data_clustering[,-1], max_k=15)
 
-start <- Sys.time()
-countries = unique(df$country) # choose unique countries in our dataset
-for(cn in countries){ # create a loop to pick a country from our country vector
-  country_df <- filter(df, country==cn) # filter the data, so that only data for this country is chosen
-  country_mean <- mean(country_df$p1sales) # calculate the mean for this country
-  print(c(cn, country_mean)) # print the result one-by-one
+
+Usually there is a tradeoff, we want as few clusters as possible, because it is easy to interpret them (nobody wants to interpret and act upon 79 segments of customers), but we want to minimize the wss statistics. The idea behind the elbow methods is that we want to find a point, where the wss is small, but the function does not become smooth (adding more clusters does not reduce much of the variance), so we are looking for an angle in the curve.
+
+Real-life grocery dataset
+Currently we don’t know much about the customers themselves, which makes difficult to interpret how meaningful is the segmentation. In general, we shouldn’t limit ourselves to RFM values, we can combine many features. Also, not only customers can be segmented, we can cluster products, purchases, product baskets or even sequences of actions in time. Let’s take a look at the real-life large dataset. The details about it and the dataset itself can be found here: “The Instacart Online Grocery Shopping Dataset 2017”. Let’s use a library data.table to speed up the process.
+
+dt_orders <- fread(file.choose()) # orders.csv
+dt_products <- fread(file.choose()) # order_products__prior.csv
+product_names <- fread(file.choose()) # products.csv
+First, we should examine the data:
+
+head(dt_orders,3)
+##    order_id user_id eval_set order_number order_dow order_hour_of_day
+## 1:  2539329       1    prior            1         2                 8
+## 2:  2398795       1    prior            2         3                 7
+## 3:   473747       1    prior            3         3                12
+##    days_since_prior_order
+## 1:                     NA
+## 2:                     15
+## 3:                     21
+head(dt_products,3)
+##    order_id product_id add_to_cart_order reordered
+## 1:        2      33120                 1         1
+## 2:        2      28985                 2         1
+## 3:        2       9327                 3         0
+head(product_names,3)
+##    product_id                         product_name aisle_id department_id
+## 1:          1           Chocolate Sandwich Cookies       61            19
+## 2:          2                     All-Seasons Salt      104            13
+## 3:          3 Robust Golden Unsweetened Oolong Tea       94             7
+We need to merge product ids with their names and then orders and products by order_id:
+
+dt_products <- left_join(dt_products, product_names[,c(1,2)], by="product_id")
+head(dt_products,3)
+##   order_id product_id add_to_cart_order reordered          product_name
+## 1        2      33120                 1         1    Organic Egg Whites
+## 2        2      28985                 2         1 Michigan Organic Kale
+## 3        2       9327                 3         0         Garlic Powder
+dt_full <- left_join(dt_orders, dt_products, by='order_id')
+head(dt_full,3)
+##   order_id user_id eval_set order_number order_dow order_hour_of_day
+## 1  2539329       1    prior            1         2                 8
+## 2  2539329       1    prior            1         2                 8
+## 3  2539329       1    prior            1         2                 8
+##   days_since_prior_order product_id add_to_cart_order reordered
+## 1                     NA        196                 1         0
+## 2                     NA      14084                 2         0
+## 3                     NA      12427                 3         0
+##                              product_name
+## 1                                    Soda
+## 2 Organic Unsweetened Vanilla Almond Milk
+## 3                     Original Beef Jerky
+Let’s now define what features we want to use for the clustering of products.
+
+Note. Don’t forget to take a look at the dictionary that explains feature names: dictionary
+
+The list of the features that we want to extract:
+
+how many times each product was bought
+how many unique users bought it
+in how many different orders this product appears
+most frequent day of week
+most frequent hour of the day
+what is the average number of day since the last order
+most frequent order of adding it to the cart
+how frequently it was bought before
+For my convinience I specify the most frequent function in advance, which is the Mode statistic (returns the most frequent element):
+
+freq_value <- function(x) {
+  ux <- unique(x)
+  ux[which.max(
+    tabulate(match(x, ux)) # number of times each item occurs
+    )]
 }
-## [1] "US"               "133.703225806452"
-## [1] "DE"               "132.453846153846"
-## [1] "GB"               "131.365384615385"
-## [1] "BR"               "133.826923076923"
-## [1] "JP"               "133.127403846154"
-## [1] "AU"               "139.846153846154"
-## [1] "CN"               "131.639423076923"
-Sys.time() - start
-## Time difference of 0.02125812 secs
-start <- Sys.time()
-df %>%
- group_by(country) %>%
- summarise(sales_mean = mean(p1sales))
-## # A tibble: 7 x 2
-##   country sales_mean
-##   <fct>        <dbl>
-## 1 AU            140.
-## 2 BR            134.
-## 3 CN            132.
-## 4 DE            132.
-## 5 GB            131.
-## 6 JP            133.
-## 7 US            134.
-Sys.time() - start
-## Time difference of 0.02227783 secs
-And this is on a very tiny dataset! On bigger sizes the difference becomes much more crucial.
+Feature collection:
 
-Visualization
-Let’s try to practice how to do charts for our later analysis, as we will do a lot of graphs along the course. It is important to remember what is the purpose of your plots. There are plots with the main goal to communicate the message for the decision-makers or consumers. These plots have to clearly convey the message that was found and investigated earlier. For the exploratory analysis the graphs facilitate the discovery. We have to learn how to detect interesting and unexpected patterns and what questions to ask next.
+features <- dt_full %>%
+  group_by(product_id) %>% # we want all this calculated per product
+  summarise(count=n(), # total orders
+            unique_users=length(unique(user_id)), # number of unique users
+            unique_orders=length(unique(order_id)), 
+            freq_ord_dow = freq_value(order_dow), # the most frequent day of the week
+            freq_hour=freq_value(order_hour_of_day),
+            avg_days_prior=mean(days_since_prior_order,na.rm=TRUE), # av. of days since last order
+            freq_add_to_cart = freq_value(add_to_cart_order), # the most frequent order in which product was added
+            reordered_n = sum(reordered)) # amount of reorders
+Note that na.rm=TRUE. If you check the summary, you discover that we have missing values. If we do not highlight that for average claculaton we ignore missing values, the result will be NA. Apparently, for r (3+2+NA)/3 = NA.
 
-Bar chart. Multi-set bar chart
-The following chart displays how many transactions per country were made.
+Missing data problem
+So, how to work with missing data. It is a very broad topic itself. Let’s see how we can deal with it:
 
-ggplot(data = df) +
- geom_bar(mapping = aes(x = country))
+filter(features, is.na(product_id)==TRUE) # always observe your missing values before proceeding! 
+## # A tibble: 1 x 9
+##   product_id  count unique_users unique_orders freq_ord_dow freq_hour
+##        <int>  <int>        <int>         <int>        <int>     <int>
+## 1         NA 206209       206209        206209            0        15
+## # ... with 3 more variables: avg_days_prior <dbl>, freq_add_to_cart <int>,
+## #   reordered_n <int>
+features <- filter(features, is.na(product_id)==FALSE)
+We can’t do anything with the product_id being missing as it is id. We remove it. Now, we proceed the same as previously, we scale our features:
 
+#dplyr
+scaled_features <- mutate_at(features, vars(-product_id), scale)
+scaled_features
+## # A tibble: 49,677 x 9
+##    product_id count[,1] unique_users[,1] unique_orders[,~ freq_ord_dow[,1]
+##         <int>     <dbl>            <dbl>            <dbl>            <dbl>
+##  1          1    0.250            0.342            0.250            -0.479
+##  2          2   -0.117           -0.145           -0.117             1.80 
+##  3          3   -0.0784          -0.148           -0.0784           -0.479
+##  4          4   -0.0676          -0.0656          -0.0676           -0.935
+##  5          5   -0.133           -0.200           -0.133            -0.935
+##  6          6   -0.135           -0.201           -0.135             1.80 
+##  7          7   -0.130           -0.191           -0.130             0.433
+##  8          8   -0.102           -0.142           -0.102            -0.935
+##  9          9   -0.104           -0.148           -0.104             1.80 
+## 10         10    0.400            0.764            0.400            -0.479
+## # ... with 49,667 more rows, and 4 more variables: freq_hour[,1] <dbl>,
+## #   avg_days_prior[,1] <dbl>, freq_add_to_cart[,1] <dbl>,
+## #   reordered_n[,1] <dbl>
+However, we still have missing values and cannot run kmeans. Why? Let us take a look:
 
-Compare it to the results of the table df %>% count(country):
+filter(features, is.na(avg_days_prior)==TRUE) %>% View
+filter(dt_full, product_id==4908) # product appears only once and average days are missing
+##   order_id user_id eval_set order_number order_dow order_hour_of_day
+## 1  1178215  185887    prior            1         3                18
+##   days_since_prior_order product_id add_to_cart_order reordered
+## 1                     NA       4908                10         0
+##                                                                                                         product_name
+## 1 Smooth & Silky Head and Shoulders Smooth & Silky 2-in-1 Dandruff Shampoo + Conditioner 13.5 Fl Oz Female Hair Care
+We can see that only average_days_prior have missing values.
 
-df %>% count(country)
-## # A tibble: 7 x 2
-##   country     n
-##   <fct>   <int>
-## 1 AU        104
-## 2 BR        208
-## 3 CN        208
-## 4 DE        520
-## 5 GB        312
-## 6 JP        416
-## 7 US        310
-The ggplot2 plots are very flexible. Let’s try to beautify it a bit:
+scaled_features <- na.omit(scaled_features)
+Let’s find amount of clusters first:
 
-ggplot(data = df) +
- geom_bar(mapping = aes(x = country), fill='#f1e8ca',
-color='#745151', alpha=0.8) + theme_bw(base_size=28) 
-
-
-Multi-chart bar:
-
-df %>%
- mutate(p1prom = as.factor(p1prom)) %>%
- ggplot() +
- geom_bar(mapping = aes(x = country, fill=p1prom),
-position='dodge')
+elbow_method(data=scaled_features, max_k=30)
 
 
-How do you interpret this plot? Try to customize it by changing colors (check help for scale_fill_manual())
+clusters <- kmeans(scaled_features, centers = 4, nstart=20)
+features_with_cluster <- na.omit(features)
+features_with_cluster$cluster <- as.factor(clusters$cluster)
+features_with_cluster <- left_join(features_with_cluster, product_names[,c(1,2)], by="product_id") # to see what are the product names
+Let’s visualize it.
 
-Histogram. Density
-Histogram shows the distribution of continuous variable. In a histogram the x-axis is partitioned into equal bins. The height of a bar shows how many observations fall into each bin. The results of the histogram heavily depend on the chosen bin size.
-
-ggplot(data = df) +
-  geom_histogram(mapping = aes(x = p1sales))
-
-
-ggplot(data = df) +
-  geom_histogram(mapping = aes(x = p1sales), binwidth=50)
+ggplot(features_with_cluster, aes(x=count, y=unique_users, color=cluster)) + geom_point() + theme_bw() + scale_x_log10() + scale_y_log10()
 
 
-ggplot(data = df) +
-  geom_histogram(mapping = aes(x = p1sales), binwidth=1)
+ggplot(features_with_cluster, aes(x=freq_ord_dow)) + geom_density() + facet_grid(~cluster)
 
 
-Another plot for the distribution is density plot. It is a smoothed histogram that provide a general estimate of the distribution. The area under the distribution is always sums to 1. It helps to estimate general tendency, however it comes at a cost, as y-axis is difficult to interpret.
+Now let’s use another ways of visualization
 
-ggplot(data = df) +
- geom_density(mapping = aes(x = p1sales), fill='#f1e8ca')
-
-
-It is more helpful to compare several distributions via density plots:
-
-ggplot(data = df) +
- geom_density(mapping = aes(x = p1sales), fill='#f1e8ca',
-alpha=0.3) +
- geom_density(aes(x=p2sales), fill = '#745151', alpha=0.3) + xlab('sales')
+corpus <- Corpus(VectorSource(
+  filter(features_with_cluster, cluster==2)$product_name))
+tdm <- TermDocumentMatrix(corpus)
+m <- as.matrix(tdm)
+v <- sort(rowSums(m),decreasing=TRUE)
+d <- data.frame(word = names(v),freq=v)
+wordcloud(d$word,d$freq, min.freq=2, max.words=50)
 
 
-Boxplot
-While histogram is a good way to show the distribution of one continuous variable, if we want to compare several distributions, it may become tricky. Densities are good, if there are not too many either. We could overlay several histograms, but if the scale between two histograms vary a lot, it is difficult to analyze. A better approach would be to use boxplots:
+You can change the cluster number and get the results of other clusters. By changing min.freq and max.words you can regulate the thresholds for word frequency to display and the amount of words to show.
 
-ggplot(data = df, mapping = aes(x = as.factor(storeNum), y = p1sales)) + geom_boxplot() + theme_bw() + xlab("storeNum")
+Hierarchical clustering
+The second clustering method that we can use for segmentation is hierarchical clustering
 
-
-Boxplots help to quickly grasp the information about several distributions and compare it.
-
-Try to change geom_boxplot to geom_violin. Use help to check (type ?geom_violin).
-
-Line chart
-Line charts are often the easiest to understand :). Usually, the most common way is to use it for time-series, e.g. we want to observe a behavior over time.
-
-Often line charts are “misused”. Look at the following graph and explain what is wrong with it:
-
-df %>%
- group_by(country) %>%
- summarise(p1sales=sum(p1sales)) %>%
- ggplot(aes(x=country, y=p1sales, group=1)) + geom_line() +
-theme_bw()
+distance_m <- dist(as.matrix(frm_tbl_initial[,-1])) 
+hc <- hclust(distance_m)
+plot(hc)
 
 
-Scatter plot. Correlation
-Two continuous variables can be visualized using scatterplot. It shows the relationship between these variables. We will later observe, how such relationship helps in models. Let’s first observe what are the basic patterns we want (or don’t want) to see in the data:
+Let’s take a small set of the data:
 
-The relationship between two variables can be expressed with the correlation coefficient. However, it only shows whether there is a linear relationship.
-
-Make a scatterplot using product 1 and product 2 sales data. What patterns do you observe?
-
-From graph alone it might be hard to define relationship between variable, so we can use cor() functon to have more determination:
-
-cor(df$p1sales, df$p2sales)
-## [1] -0.5584222
-The sign in correlation means in what way first feature affects second (+ for increases; - for decreses).
-
-Melting/Casting
-There is a particular concept of long and wide data formats, as we discussed during the lecture. For example, when we made plots of two density plots for product 1 and product 2, it was not the optimal way to do it. We can tidy our data.
-
-To do so, we will need tidyr package:
-
-install.packages("tidyr")
-library("tidyr")
-gathered_df <- df %>%
- gather(p1sales, p2sales, key = "product", value = "sales")
-head(gathered_df)
-##   storeNum Year Week p1price p2price p1prom p2prom country product sales
-## 1      101    1    1    2.29    2.29      0      0      US p1sales   127
-## 2      101    1    2    2.49    2.49      0      0      US p1sales   137
-## 3      101    1    3    2.99    2.99      1      0      US p1sales   156
-## 4      101    1    4    2.99    3.19      0      0      US p1sales   117
-## 5      101    1    5    2.49    2.59      0      1      US p1sales   138
-## 6      101    1    6    2.79    2.49      0      0      US p1sales   115
-Now we can build the plot with densities in more natural way:
-
-ggplot(data = gathered_df) +
- geom_density(mapping = aes(x = sales, fill=product),
-alpha=0.3) +
- scale_fill_manual(values = c('#f1e8ca', '#745151'))
+#small sample of data 
+features <- left_join(features, product_names[,c(1,2)], by="product_id")
+features_sample <- sample_n(features, size = 100) 
+features_sample <- as.data.frame(features_sample) # we need this function just because the dendrogram cannot see labels
+row.names(features_sample) = features_sample$product_name # we will assign product names as row names. just strange unlogical behaviour of dendogram plot 
+features_sample$product_name <- NULL
+distance_m <- dist(as.matrix(features_sample[,-c(1)]))
+hc <- hclust(distance_m)
+plot(hc)
 
 
-Heatmap
-A heat map (or heatmap) is a graphical representation of data where the individual values contained in a matrix are represented as colors. It is really useful to display a general view of numerical data, not to extract specific data point.
+A few other ways to plot a dendrogram (don’t forget to install packages first):
 
-In our example, we will add one more column that will display the quality of the shop:
+plot(as.phylo(hc), type = "fan")
 
-set.seed(13)
-df <- cbind(df, quality = sample(as.factor(c("low", "medium", "high")), nrow(df), replace = TRUE))
-Now we can build the heatmap:
 
-df %>% 
-  select(quality,country) %>% 
-  group_by(country, quality) %>% 
-  summarize(rowCount= n()) %>% 
-  ggplot() + geom_tile(aes(x = quality, y = country, fill = rowCount))
+ggdendrogram(hc, rotate = TRUE, size = 4)
